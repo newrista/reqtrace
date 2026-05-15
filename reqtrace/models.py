@@ -1,74 +1,59 @@
-"""Core data models for HTTP request/response capture."""
+"""Data models for reqtrace HTTP traces."""
 
 from dataclasses import dataclass, field
-from datetime import datetime
 from typing import Dict, Optional
+import datetime
+import uuid
 
 
 @dataclass
 class HttpRequest:
     method: str
-    url: str
+    path: str
+    query_string: str = ""
     headers: Dict[str, str] = field(default_factory=dict)
-    body: Optional[bytes] = None
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    body: bytes = b""
+    content_type: Optional[str] = None
+    query_params: Dict[str, str] = field(default_factory=dict)
 
-    @property
-    def path(self) -> str:
-        from urllib.parse import urlparse
-        return urlparse(self.url).path
+    def is_json(self) -> bool:
+        return bool(self.content_type and "json" in self.content_type)
 
-    @property
-    def query_string(self) -> str:
-        from urllib.parse import urlparse
-        return urlparse(self.url).query
-
-    def content_type(self) -> Optional[str]:
-        return self.headers.get("content-type") or self.headers.get("Content-Type")
+    def has_body(self) -> bool:
+        return len(self.body) > 0
 
 
 @dataclass
 class HttpResponse:
     status_code: int
     headers: Dict[str, str] = field(default_factory=dict)
-    body: Optional[bytes] = None
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    body: bytes = b""
+    content_type: Optional[str] = None
 
-    def content_type(self) -> Optional[str]:
-        return self.headers.get("content-type") or self.headers.get("Content-Type")
-
-    @property
     def is_success(self) -> bool:
         return 200 <= self.status_code < 300
+
+    def is_error(self) -> bool:
+        return self.status_code >= 400
+
+    def is_json(self) -> bool:
+        return bool(self.content_type and "json" in self.content_type)
 
 
 @dataclass
 class TraceEntry:
     request: HttpRequest
     response: HttpResponse
-    duration_ms: float
-    trace_id: str = ""
+    id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    timestamp: datetime.datetime = field(default_factory=datetime.datetime.utcnow)
 
-    def __post_init__(self):
-        if not self.trace_id:
-            import uuid
-            self.trace_id = str(uuid.uuid4())
+    def duration_hint(self) -> str:
+        """Placeholder for latency tracking in future versions."""
+        return "N/A"
 
-    def to_dict(self) -> dict:
-        return {
-            "trace_id": self.trace_id,
-            "duration_ms": self.duration_ms,
-            "request": {
-                "method": self.request.method,
-                "url": self.request.url,
-                "headers": self.request.headers,
-                "body": self.request.body.decode(errors="replace") if self.request.body else None,
-                "timestamp": self.request.timestamp.isoformat(),
-            },
-            "response": {
-                "status_code": self.response.status_code,
-                "headers": self.response.headers,
-                "body": self.response.body.decode(errors="replace") if self.response.body else None,
-                "timestamp": self.response.timestamp.isoformat(),
-            },
-        }
+    def summary_line(self) -> str:
+        return (
+            f"[{self.timestamp.isoformat()}] "
+            f"{self.request.method} {self.request.path} "
+            f"-> {self.response.status_code}"
+        )
