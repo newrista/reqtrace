@@ -1,18 +1,21 @@
 """CLI entry point for reqtrace."""
 
+from __future__ import annotations
+
 import argparse
 import json
 import sys
 
+from reqtrace.exporter import export_json
+from reqtrace.filter import (
+    apply_filters,
+    filter_by_method,
+    filter_by_path,
+    filter_by_status,
+)
 from reqtrace.storage import TraceStore
 from reqtrace.summary import summarize, top_paths
-from reqtrace.filter import (
-    filter_by_method,
-    filter_by_status_range,
-    filter_by_content_type,
-)
-from reqtrace.exporter import export_json, export_har
-from reqtrace.redact import redact_entry
+from reqtrace.validate import validate_all
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -20,72 +23,75 @@ def build_parser() -> argparse.ArgumentParser:
         prog="reqtrace",
         description="Lightweight HTTP request logger and inspector.",
     )
-    sub = parser.add_subparsers(dest="command")
+    sub = parser.add_subparsers(dest="command", required=True)
 
     # summary
-    sub.add_parser("summary", help="Print traffic summary")
+    sub.add_parser("summary", help="Print traffic summary.")
 
     # top-paths
-    tp = sub.add_parser("top-paths", help="List most frequent paths")
-    tp.add_argument("--limit", type=int, default=5)
+    tp = sub.add_parser("top-paths", help="Show top N requested paths.")
+    tp.add_argument("-n", type=int, default=5)
 
     # filter
-    f = sub.add_parser("filter", help="Filter entries")
-    f.add_argument("--method", type=str)
-    f.add_argument("--status-min", type=int)
-    f.add_argument("--status-max", type=int)
-    f.add_argument("--content-type", type=str)
+    f_cmd = sub.add_parser("filter", help="Filter and print entries.")
+    f_cmd.add_argument("--method", default=None)
+    f_cmd.add_argument("--path", default=None)
+    f_cmd.add_argument("--status", type=int, default=None)
 
     # export
-    ex = sub.add_parser("export", help="Export traces")
-    ex.add_argument("--format", choices=["json", "har"], default="json")
-    ex.add_argument("--redact", action="store_true", help="Redact sensitive fields")
-    ex.add_argument("--output", type=str, default=None)
+    ex = sub.add_parser("export", help="Export entries to JSON.")
+    ex.add_argument("--output", default="-", help="Output file (- for stdout).")
+
+    # validate
+    v_cmd = sub.add_parser("validate", help="Validate entries against OpenAPI schema.")
+    v_cmd.add_argument("schema", help="Path to OpenAPI JSON schema file.")
 
     return parser
 
 
-def run(store: TraceStore, args=None, out=None):
-    if out is None:
-        out = sys.stdout
-
+def run(store: TraceStore, argv: list[str] | None = None) -> None:
     parser = build_parser()
-    parsed = parser.parse_args(args)
+    args = parser.parse_args(argv)
 
-    if parsed.command == "summary":
-        stats = summarize(store.get_all())
-        for k, v in stats.items():
-            out.write(f"{k}: {v}\n")
+    entries = store.get_all()
 
-    elif parsed.command == "top-paths":
-        paths = top_paths(store.get_all(), limit=parsed.limit)
-        for path, count in paths:
-            out.write(f"{path}: {count}\n")
+    if args.command == "summary":
+        stats = summarize(entries)
+        for key, value in stats.items():
+            print(f"{key}: {value}")
 
-    elif parsed.command == "filter":
-        entries = store.get_all()
-        if parsed.method:
-            entries = filter_by_method(entries, parsed.method)
-        if parsed.status_min is not None and parsed.status_max is not None:
-            entries = filter_by_status_range(entries, parsed.status_min, parsed.status_max)
-        if parsed.content_type:
-            entries = filter_by_content_type(entries, parsed.content_type)
+    elif args.command == "top-paths":
+        for path, count in top_paths(entries, n=args.n):
+            print(f"{count:>6}  {path}")
+
+    elif args.command == "filter":
+        if args.method:
+            entries = filter_by_method(entries, args.method)
+        if args.path:
+            entries = filter_by_path(entries, args.path)
+        if args.status:
+            entries = filter_by_status(entries, args.status)
         for e in entries:
-            out.write(e.summary_line() + "\n")
+            print(e.summary())
 
-    elif parsed.command == "export":
-        entries = store.get_all()
-        if getattr(parsed, "redact", False):
-            entries = [redact_entry(e) for e in entries]
-        if parsed.format == "har":
-            data = export_har(entries)
+    elif args.command == "export":
+        data = export_json(entries)
+        if args.output == "-":
+            print(data)
         else:
-            data = export_json(entries)
-        if parsed.output:
-            with open(parsed.output, "w") as f:
-                f.write(data)
-        else:
-            out.write(data + "\n")
+            with open(args.output, "w") as fh:
+                fh.write(data)
 
-    else:
-        parser.print_help(out)
+    elif args.command == "validate":
+        with open(args.schema) as fh:
+            openapi = json.load(fh)
+        results = validate_all(entries, openapi)
+        invalid = [r for r in results if not r.is_valid]
+        if not invalid:
+            print("All entries valid.")
+        else:
+            for r in invalid:
+                print(f"INVALID [{r.entry_id}] {r.method} {r.path}")
+                for err in r.errors:
+                    print(f"  - {err}")
+            sys.exit(1)

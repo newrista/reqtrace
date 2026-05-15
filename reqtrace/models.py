@@ -1,59 +1,62 @@
-"""Data models for reqtrace HTTP traces."""
+"""Core data models for reqtrace."""
 
-from dataclasses import dataclass, field
-from typing import Dict, Optional
-import datetime
+from __future__ import annotations
+
 import uuid
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from typing import Any
 
 
 @dataclass
 class HttpRequest:
     method: str
     path: str
+    headers: dict[str, str] = field(default_factory=dict)
+    body: bytes | None = None
     query_string: str = ""
-    headers: Dict[str, str] = field(default_factory=dict)
-    body: bytes = b""
-    content_type: Optional[str] = None
-    query_params: Dict[str, str] = field(default_factory=dict)
+    http_version: str = "HTTP/1.1"
 
     def is_json(self) -> bool:
-        return bool(self.content_type and "json" in self.content_type)
+        ct = self.headers.get("content-type", "")
+        return "application/json" in ct
 
     def has_body(self) -> bool:
-        return len(self.body) > 0
+        return self.body is not None and len(self.body) > 0
 
 
 @dataclass
 class HttpResponse:
     status_code: int
-    headers: Dict[str, str] = field(default_factory=dict)
-    body: bytes = b""
-    content_type: Optional[str] = None
+    headers: dict[str, str] = field(default_factory=dict)
+    body: bytes | None = None
 
     def is_success(self) -> bool:
         return 200 <= self.status_code < 300
 
-    def is_error(self) -> bool:
-        return self.status_code >= 400
-
     def is_json(self) -> bool:
-        return bool(self.content_type and "json" in self.content_type)
+        ct = self.headers.get("content-type", "")
+        return "application/json" in ct
+
+    def has_body(self) -> bool:
+        return self.body is not None and len(self.body) > 0
 
 
 @dataclass
 class TraceEntry:
     request: HttpRequest
-    response: HttpResponse
+    response: HttpResponse | None = None
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
-    timestamp: datetime.datetime = field(default_factory=datetime.datetime.utcnow)
+    timestamp: datetime = field(
+        default_factory=lambda: datetime.now(timezone.utc)
+    )
+    duration_ms: float | None = None
+    tags: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
-    def duration_hint(self) -> str:
-        """Placeholder for latency tracking in future versions."""
-        return "N/A"
-
-    def summary_line(self) -> str:
+    def summary(self) -> str:
+        status = self.response.status_code if self.response else "?"
         return (
             f"[{self.timestamp.isoformat()}] "
-            f"{self.request.method} {self.request.path} "
-            f"-> {self.response.status_code}"
+            f"{self.request.method} {self.request.path} -> {status}"
         )
