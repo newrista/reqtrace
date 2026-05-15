@@ -109,6 +109,7 @@ def test_clear_annotations_removes_all():
     assert get_all_annotations(entry) == {}
 
 
-def test_clear_annotations_no_metadata_is_noop():
-    entry = _make_entry(metadata=None)
+def test_clear_annotations_on_unannotated_entry_is_noop():
+    entry = _make_entry()
     clear_annotations(entry)  # should not raise
+    assert get_all_annotations(entry) == {}
