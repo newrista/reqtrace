@@ -1,7 +1,8 @@
 """Core data models for reqtrace."""
 
 from dataclasses import dataclass, field
-from typing import Optional, Dict, Any
+from typing import Dict, Optional, Any
+from datetime import datetime
 from urllib.parse import urlparse, parse_qs
 
 
@@ -9,8 +10,8 @@ from urllib.parse import urlparse, parse_qs
 class HttpRequest:
     method: str
     url: str
-    headers: Dict[str, str]
-    body: Optional[bytes]
+    headers: Dict[str, str] = field(default_factory=dict)
+    body: Optional[bytes] = None
 
     @property
     def path(self) -> str:
@@ -29,12 +30,16 @@ class HttpRequest:
     def has_body(self) -> bool:
         return self.body is not None and len(self.body) > 0
 
+    @property
+    def host(self) -> str:
+        return urlparse(self.url).netloc
+
 
 @dataclass
 class HttpResponse:
     status_code: int
-    headers: Dict[str, str]
-    body: Optional[bytes]
+    headers: Dict[str, str] = field(default_factory=dict)
+    body: Optional[bytes] = None
 
     @property
     def is_json(self) -> bool:
@@ -45,16 +50,13 @@ class HttpResponse:
     def is_success(self) -> bool:
         return 200 <= self.status_code < 300
 
-    @property
-    def is_error(self) -> bool:
-        return self.status_code >= 400
-
 
 @dataclass
 class TraceEntry:
     id: str
     request: HttpRequest
-    response: HttpResponse
-    metadata: Optional[Dict[str, Any]] = field(default=None)
+    response: Optional[HttpResponse] = None
+    timestamp: datetime = field(default_factory=datetime.utcnow)
     tags: list = field(default_factory=list)
-    timestamp: Optional[str] = field(default=None)
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    duration: Optional[float] = None  # milliseconds
