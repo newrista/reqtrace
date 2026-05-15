@@ -1,24 +1,24 @@
-"""Core data models for reqtrace."""
+"""Data models for reqtrace."""
 
-from __future__ import annotations
-
-import uuid
+from typing import Any, Dict, List, Optional, Tuple
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Any
 
 
 @dataclass
 class HttpRequest:
     method: str
-    path: str
-    headers: dict[str, str] = field(default_factory=dict)
-    body: bytes | None = None
-    query_string: str = ""
-    http_version: str = "HTTP/1.1"
+    url: str
+    headers: Dict[str, str] = field(default_factory=dict)
+    body: Optional[bytes] = None
+    query_params: Dict[str, str] = field(default_factory=dict)
+
+    @property
+    def path(self) -> str:
+        from urllib.parse import urlparse
+        return urlparse(self.url).path
 
     def is_json(self) -> bool:
-        ct = self.headers.get("content-type", "")
+        ct = self.headers.get("Content-Type", "")
         return "application/json" in ct
 
     def has_body(self) -> bool:
@@ -28,35 +28,27 @@ class HttpRequest:
 @dataclass
 class HttpResponse:
     status_code: int
-    headers: dict[str, str] = field(default_factory=dict)
-    body: bytes | None = None
+    headers: Dict[str, str] = field(default_factory=dict)
+    body: Optional[bytes] = None
 
     def is_success(self) -> bool:
         return 200 <= self.status_code < 300
 
     def is_json(self) -> bool:
-        ct = self.headers.get("content-type", "")
+        ct = self.headers.get("Content-Type", "")
         return "application/json" in ct
-
-    def has_body(self) -> bool:
-        return self.body is not None and len(self.body) > 0
 
 
 @dataclass
 class TraceEntry:
+    id: str
     request: HttpRequest
-    response: HttpResponse | None = None
-    id: str = field(default_factory=lambda: str(uuid.uuid4()))
-    timestamp: datetime = field(
-        default_factory=lambda: datetime.now(timezone.utc)
-    )
-    duration_ms: float | None = None
-    tags: list[str] = field(default_factory=list)
-    metadata: dict[str, Any] = field(default_factory=dict)
+    response: HttpResponse
+    timestamp: str
+    duration_ms: Optional[float] = None
+    tags: List[str] = field(default_factory=list)
 
-    def summary(self) -> str:
-        status = self.response.status_code if self.response else "?"
-        return (
-            f"[{self.timestamp.isoformat()}] "
-            f"{self.request.method} {self.request.path} -> {status}"
-        )
+    def _replace(self, **kwargs) -> "TraceEntry":
+        """Return a copy with fields replaced."""
+        import dataclasses
+        return dataclasses.replace(self, **kwargs)

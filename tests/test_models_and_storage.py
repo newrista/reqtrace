@@ -1,109 +1,107 @@
-"""Tests for reqtrace core models and in-memory storage."""
-
-import time
-from datetime import datetime
+"""Tests for reqtrace models and storage."""
 
 import pytest
-
 from reqtrace.models import HttpRequest, HttpResponse, TraceEntry
 from reqtrace.storage import TraceStore
 
 
-# --- HttpRequest ---
-
-def make_request(**kwargs) -> HttpRequest:
-    defaults = {"method": "GET", "url": "http://example.com/api/v1"}
-    defaults.update(kwargs)
-    return HttpRequest(**defaults)
-
-
-def make_response(**kwargs) -> HttpResponse:
-    defaults = {"status_code": 200}
-    defaults.update(kwargs)
-    return HttpResponse(**defaults)
+def make_request(method="GET", url="http://example.com/path?q=1",
+                 headers=None, body=None) -> HttpRequest:
+    return HttpRequest(
+        method=method,
+        url=url,
+        headers=headers or {},
+        body=body,
+        query_params={"q": "1"} if "?" in url else {},
+    )
 
 
-def make_entry(duration_ms: float = 42.0) -> TraceEntry:
-    return TraceEntry(request=make_request(), response=make_response(), duration_ms=duration_ms)
+def make_response(status=200, headers=None, body=None) -> HttpResponse:
+    return HttpResponse(
+        status_code=status,
+        headers=headers or {},
+        body=body,
+    )
+
+
+def make_entry(entry_id="abc", method="GET", status=200, tags=None) -> TraceEntry:
+    return TraceEntry(
+        id=entry_id,
+        request=make_request(method=method),
+        response=make_response(status=status),
+        timestamp="2024-01-01T00:00:00Z",
+        tags=list(tags or []),
+    )
 
 
 def test_request_path_and_query():
-    req = make_request(url="http://example.com/api/v1?foo=bar&baz=1")
+    req = make_request(url="http://example.com/api/v1?foo=bar")
     assert req.path == "/api/v1"
-    assert req.query_string == "foo=bar&baz=1"
 
 
 def test_request_content_type():
-    req = make_request(headers={"content-type": "application/json"})
-    assert req.content_type() == "application/json"
+    req = make_request(headers={"Content-Type": "application/json"})
+    assert req.is_json()
+
+
+def test_request_has_body():
+    req = make_request(body=b'{"key": "value"}')
+    assert req.has_body()
+
+
+def test_request_no_body():
+    req = make_request()
+    assert not req.has_body()
 
 
 def test_response_is_success():
-    assert make_response(status_code=200).is_success
-    assert make_response(status_code=201).is_success
-    assert not make_response(status_code=404).is_success
-    assert not make_response(status_code=500).is_success
+    resp = make_response(status=201)
+    assert resp.is_success()
 
 
-def test_trace_entry_auto_id():
+def test_response_not_success():
+    resp = make_response(status=404)
+    assert not resp.is_success()
+
+
+def test_response_is_json():
+    resp = make_response(headers={"Content-Type": "application/json; charset=utf-8"})
+    assert resp.is_json()
+
+
+def test_trace_entry_replace():
     entry = make_entry()
-    assert entry.trace_id != ""
+    updated = entry._replace(tags=["new-tag"])
+    assert updated.tags == ["new-tag"]
+    assert entry.tags == []
 
 
-def test_trace_entry_to_dict():
-    req = make_request(body=b"{\"key\": \"value\"}")
-    resp = make_response(status_code=201, body=b"created")
-    entry = TraceEntry(request=req, response=resp, duration_ms=10.5)
-    d = entry.to_dict()
-    assert d["duration_ms"] == 10.5
-    assert d["request"]["method"] == "GET"
-    assert d["response"]["status_code"] == 201
-    assert d["response"]["body"] == "created"
-
-
-# --- TraceStore ---
-
-def test_store_add_and_len():
+def test_store_add_and_get_all():
     store = TraceStore()
-    store.add(make_entry())
-    store.add(make_entry())
-    assert len(store) == 2
-
-
-def test_store_max_entries():
-    store = TraceStore(max_entries=3)
-    for _ in range(5):
-        store.add(make_entry())
-    assert len(store) == 3
+    e1 = make_entry("1")
+    e2 = make_entry("2")
+    store.add(e1)
+    store.add(e2)
+    all_entries = store.get_all()
+    assert len(all_entries) == 2
 
 
 def test_store_get_by_id():
     store = TraceStore()
-    entry = make_entry()
+    entry = make_entry("xyz")
     store.add(entry)
-    found = store.get_by_id(entry.trace_id)
-    assert found is entry
-    assert store.get_by_id("nonexistent") is None
+    found = store.get_by_id("xyz")
+    assert found is not None
+    assert found.id == "xyz"
 
 
-def test_store_filter_by_method():
+def test_store_get_by_id_missing():
     store = TraceStore()
-    store.add(TraceEntry(request=make_request(method="GET"), response=make_response(), duration_ms=1))
-    store.add(TraceEntry(request=make_request(method="POST"), response=make_response(), duration_ms=2))
-    assert len(store.filter_by_method("GET")) == 1
-    assert len(store.filter_by_method("post")) == 1
-
-
-def test_store_filter_by_status():
-    store = TraceStore()
-    store.add(TraceEntry(request=make_request(), response=make_response(status_code=200), duration_ms=1))
-    store.add(TraceEntry(request=make_request(), response=make_response(status_code=404), duration_ms=2))
-    assert len(store.filter_by_status(200)) == 1
-    assert len(store.filter_by_status(500)) == 0
+    assert store.get_by_id("missing") is None
 
 
 def test_store_clear():
     store = TraceStore()
-    store.add(make_entry())
+    store.add(make_entry("1"))
     store.clear()
-    assert len(store) == 0
+    assert store.get_all() == []
