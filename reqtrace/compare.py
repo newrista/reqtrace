@@ -9,7 +9,11 @@ def compare_by_index(
     entries_a: List[TraceEntry],
     entries_b: List[TraceEntry],
 ) -> List[Dict]:
-    """Pair entries by position and return a list of diff reports."""
+    """Pair entries by position and return a list of diff reports.
+
+    Only the first min(len(entries_a), len(entries_b)) entries are compared.
+    Unmatched trailing entries in either list are silently ignored.
+    """
     results = []
     pairs = zip(entries_a, entries_b)
     for i, (a, b) in enumerate(pairs):
@@ -31,7 +35,12 @@ def compare_by_path_method(
     entries_a: List[TraceEntry],
     entries_b: List[TraceEntry],
 ) -> List[Dict]:
-    """Match entries by (method, path) and diff matched pairs."""
+    """Match entries by (method, path) and diff matched pairs.
+
+    Entries in *entries_a* that have no counterpart in *entries_b* are
+    included in the result with ``changed=None`` and a descriptive summary.
+    Entries present only in *entries_b* are not reported.
+    """
     index_b: Dict[Tuple[str, str], TraceEntry] = {
         (e.request.method, e.request.path): e for e in entries_b
     }
@@ -68,3 +77,12 @@ def compare_by_path_method(
 def changed_only(comparison: List[Dict]) -> List[Dict]:
     """Filter a comparison result to only entries with changes."""
     return [c for c in comparison if c.get("changed")]
+
+
+def unmatched_only(comparison: List[Dict]) -> List[Dict]:
+    """Return entries from a comparison result that had no match in the second set.
+
+    These are entries where ``changed`` is ``None``, indicating that no
+    counterpart was found during matching (e.g. from ``compare_by_path_method``).
+    """
+    return [c for c in comparison if c.get("changed") is None]
