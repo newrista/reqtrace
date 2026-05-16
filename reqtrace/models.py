@@ -1,8 +1,11 @@
 """Core data models for reqtrace."""
 
+from __future__ import annotations
+
+import uuid
+import time
 from dataclasses import dataclass, field
-from typing import Dict, Optional, Any
-from datetime import datetime
+from typing import Dict, List, Optional, Set
 from urllib.parse import urlparse, parse_qs
 
 
@@ -10,20 +13,20 @@ from urllib.parse import urlparse, parse_qs
 class HttpRequest:
     method: str
     url: str
-    headers: Dict[str, str] = field(default_factory=dict)
-    body: Optional[bytes] = None
+    headers: Dict[str, str]
+    body: Optional[str] = None
 
     @property
     def path(self) -> str:
         return urlparse(self.url).path
 
     @property
-    def query_params(self) -> Dict[str, list]:
+    def query_params(self) -> Dict[str, List[str]]:
         return parse_qs(urlparse(self.url).query)
 
     @property
     def is_json(self) -> bool:
-        ct = self.headers.get("Content-Type", "")
+        ct = self.headers.get("Content-Type", self.headers.get("content-type", ""))
         return "application/json" in ct
 
     @property
@@ -34,29 +37,35 @@ class HttpRequest:
     def host(self) -> str:
         return urlparse(self.url).netloc
 
+    @property
+    def scheme(self) -> str:
+        return urlparse(self.url).scheme
+
 
 @dataclass
 class HttpResponse:
     status_code: int
-    headers: Dict[str, str] = field(default_factory=dict)
-    body: Optional[bytes] = None
-
-    @property
-    def is_json(self) -> bool:
-        ct = self.headers.get("Content-Type", "")
-        return "application/json" in ct
+    headers: Dict[str, str]
+    body: Optional[str] = None
 
     @property
     def is_success(self) -> bool:
         return 200 <= self.status_code < 300
 
+    @property
+    def is_error(self) -> bool:
+        return self.status_code >= 400
+
+    @property
+    def content_type(self) -> str:
+        return self.headers.get("Content-Type", self.headers.get("content-type", ""))
+
 
 @dataclass
 class TraceEntry:
-    id: str
     request: HttpRequest
-    response: Optional[HttpResponse] = None
-    timestamp: datetime = field(default_factory=datetime.utcnow)
-    tags: list = field(default_factory=list)
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    duration: Optional[float] = None  # milliseconds
+    response: HttpResponse
+    id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    timestamp: float = field(default_factory=time.time)
+    tags: Set[str] = field(default_factory=set)
+    metadata: Dict[str, str] = field(default_factory=dict)
